@@ -366,6 +366,8 @@ basicKnownKeyNames
         -- StaticPtr
         , staticPtrTyConName
         , staticPtrDataConName, staticPtrInfoDataConName
+        , isStaticClassName
+        , fromStaticPtrName
 
         -- Fingerprint
         , fingerprintDataConName
@@ -1360,6 +1362,14 @@ staticPtrDataConName :: Name
 staticPtrDataConName =
     dcQual gHC_STATICPTR (fsLit "StaticPtr") staticPtrDataConKey
 
+isStaticClassName :: Name
+isStaticClassName =
+    clsQual gHC_STATICPTR (fsLit "IsStatic") isStaticClassKey
+
+fromStaticPtrName :: Name
+fromStaticPtrName =
+    varQual gHC_STATICPTR (fsLit "fromStaticPtr") fromStaticPtrClassOpKey
+
 fingerprintDataConName :: Name
 fingerprintDataConName =
     dcQual gHC_FINGERPRINT_TYPE (fsLit "Fingerprint") fingerprintDataConKey
@@ -1481,6 +1491,9 @@ monoidClassKey    = mkPreludeClassUnique 47
 -- Implicit Parameters
 ipClassKey :: Unique
 ipClassKey = mkPreludeClassUnique 48
+
+isStaticClassKey :: Unique
+isStaticClassKey = mkPreludeClassUnique 49
 
 ---------------- Template Haskell -------------------
 --      THNames.hs: USES ClassUniques 200-299
@@ -2101,6 +2114,9 @@ toListClassOpKey = mkPreludeMiscIdUnique 501
 
 proxyHashKey :: Unique
 proxyHashKey = mkPreludeMiscIdUnique 502
+
+fromStaticPtrClassOpKey :: Unique
+fromStaticPtrClassOpKey = mkPreludeMiscIdUnique 503
 
 ---------------- Template Haskell -------------------
 --      THNames.hs: USES IdUniques 200-499

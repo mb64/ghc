@@ -80,6 +80,13 @@ unsafeLookupStaticPtr (Fingerprint w1 w2) = do
 
 foreign import ccall unsafe hs_spt_lookup :: Ptr () -> IO (Ptr a)
 
+-- | A class for things buildable from static pointers.
+class IsStatic p where
+  fromStaticPtr :: StaticPtr a -> p a
+
+instance IsStatic StaticPtr where
+  fromStaticPtr = id
+
 -- | Miscelaneous information available for debugging purposes.
 data StaticPtrInfo = StaticPtrInfo
     { -- | Package key of the package where the static pointer is defined
