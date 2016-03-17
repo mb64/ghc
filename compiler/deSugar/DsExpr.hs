@@ -428,7 +428,7 @@ dsExpr (PArrSeq _ _)
 \end{verbatim}
 -}
 
-dsExpr (HsStatic expr@(L loc _)) = do
+dsExpr (HsStatic _ expr@(L loc _)) = do
     expr_ds <- dsLExpr expr
     let ty = exprType expr_ds
     n' <- mkSptEntryName loc

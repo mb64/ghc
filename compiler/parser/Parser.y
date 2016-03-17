@@ -2242,7 +2242,7 @@ hpc_annot :: { Located ( (([AddAnn],SourceText),(StringLiteral,(Int,Int),(Int,In
 
 fexp    :: { LHsExpr RdrName }
         : fexp aexp                             { sLL $1 $> $ HsApp $1 $2 }
-        | 'static' aexp                         {% ams (sLL $1 $> $ HsStatic $2)
+        | 'static' aexp                         {% ams (sLL $1 $> $ HsStatic placeHolderNames $2)
                                                        [mj AnnStatic $1] }
         | aexp                                  { $1 }
 
