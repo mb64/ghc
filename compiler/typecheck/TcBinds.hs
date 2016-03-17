@@ -424,16 +424,19 @@ tc_group top_lvl sig_fn prag_fn (Recursive, binds) thing_inside
     sccs = stronglyConnCompFromEdgedVertices (mkEdges sig_fn binds)
 
     go :: [SCC (LHsBind Name)] -> TcM (LHsBinds TcId, thing)
-    go (scc:sccs) = do  { (binds1, ids1) <- tc_scc scc
-                        ; (binds2, thing) <- tcExtendLetEnv top_lvl ids1 $
-                                             go sccs
+    go (scc:sccs) = do  { ((binds1, ids1), closedGroup) <- tc_scc scc
+                        ; (binds2, thing) <-
+                            tcExtendLetEnv top_lvl closedGroup ids1 $ go sccs
                         ; return (binds1 `unionBags` binds2, thing) }
     go []         = do  { thing <- thing_inside; return (emptyBag, thing) }
 
     tc_scc (AcyclicSCC bind) = tc_sub_group NonRecursive [bind]
     tc_scc (CyclicSCC binds) = tc_sub_group Recursive    binds
 
-    tc_sub_group = tcPolyBinds top_lvl sig_fn prag_fn Recursive
+    tc_sub_group rec_tc binds = do
+      closedGroup <- isClosedBndrGroup binds
+      r <- tcPolyBinds top_lvl sig_fn prag_fn Recursive rec_tc closedGroup binds
+      return (r, closedGroup)
 
 recursivePatSynErr :: OutputableBndr name => LHsBinds name -> TcM a
 recursivePatSynErr binds
@@ -462,10 +465,12 @@ tc_single _top_lvl sig_fn _prag_fn (L _ (PatSynBind psb@PSB{ psb_id = L _ name }
         Just                 _  -> panic "tc_single"
 
 tc_single top_lvl sig_fn prag_fn lbind thing_inside
-  = do { (binds1, ids) <- tcPolyBinds top_lvl sig_fn prag_fn
+  = do { closedGroup <- isClosedBndrGroup [lbind]
+       ; (binds1, ids) <- tcPolyBinds top_lvl sig_fn prag_fn
                                       NonRecursive NonRecursive
+                                      closedGroup
                                       [lbind]
-       ; thing <- tcExtendLetEnv top_lvl ids thing_inside
+       ; thing <- tcExtendLetEnv top_lvl closedGroup ids thing_inside
        ; return (binds1, thing) }
 
 ------------------------
@@ -493,6 +498,7 @@ tcPolyBinds :: TopLevelFlag -> TcSigFun -> TcPragEnv
             -> RecFlag         -- Whether the group is really recursive
             -> RecFlag         -- Whether it's recursive after breaking
                                -- dependencies based on type signatures
+            -> TopLevelFlag    -- Whether the group is closed
             -> [LHsBind Name]  -- None are PatSynBind
             -> TcM (LHsBinds TcId, [TcId])
 
@@ -507,7 +513,7 @@ tcPolyBinds :: TopLevelFlag -> TcSigFun -> TcPragEnv
 -- Knows nothing about the scope of the bindings
 -- None of the bindings are pattern synonyms
 
-tcPolyBinds top_lvl sig_fn prag_fn rec_group rec_tc bind_list
+tcPolyBinds top_lvl sig_fn prag_fn rec_group rec_tc closedGroup bind_list
   = setSrcSpan loc                              $
     recoverM (recoveryCode binder_names sig_fn) $ do
         -- Set up main recover; take advantage of any type sigs
@@ -515,9 +521,7 @@ tcPolyBinds top_lvl sig_fn prag_fn rec_group rec_tc bind_list
     { traceTc "------------------------------------------------" Outputable.empty
     ; traceTc "Bindings for {" (ppr binder_names)
     ; dflags   <- getDynFlags
-    ; type_env <- getLclTypeEnv
-    ; let plan = decideGeneralisationPlan dflags type_env
-                         binder_names bind_list sig_fn
+    ; let plan = decideGeneralisationPlan dflags bind_list closedGroup sig_fn
     ; traceTc "Generalisation plan" (ppr plan)
     ; result@(tc_binds, poly_ids) <- case plan of
          NoGen              -> tcPolyNoGen rec_tc prag_fn sig_fn bind_list
@@ -1879,15 +1883,14 @@ instance Outputable GeneralisationPlan where
   ppr (CheckGen _ s) = text "CheckGen" <+> ppr s
 
 decideGeneralisationPlan
-   :: DynFlags -> TcTypeEnv -> [Name]
-   -> [LHsBind Name] -> TcSigFun -> GeneralisationPlan
-decideGeneralisationPlan dflags type_env bndr_names lbinds sig_fn
+   :: DynFlags -> [LHsBind Name] -> TopLevelFlag -> TcSigFun
+   -> GeneralisationPlan
+decideGeneralisationPlan dflags lbinds closedGroup sig_fn
   | unlifted_pat_binds                    = NoGen
   | Just bind_sig <- one_funbind_with_sig = sig_plan bind_sig
   | mono_local_binds                      = NoGen
   | otherwise                             = InferGen mono_restriction
   where
-    bndr_set = mkNameSet bndr_names
     binds = map unLoc lbinds
 
     sig_plan :: (LHsBind Name, TcIdSigInfo) -> GeneralisationPlan
@@ -1913,32 +1916,8 @@ decideGeneralisationPlan dflags type_env bndr_names lbinds sig_fn
     mono_restriction  = xopt LangExt.MonomorphismRestriction dflags
                      && any restricted binds
 
-    is_closed_ns :: NameSet -> Bool -> Bool
-    is_closed_ns ns b = foldNameSet ((&&) . is_closed_id) b ns
-        -- ns are the Names referred to from the RHS of this bind
-
-    is_closed_id :: Name -> Bool
-    -- See Note [Bindings with closed types] in TcRnTypes
-    is_closed_id name
-      | name `elemNameSet` bndr_set
-      = True              -- Ignore binders in this groups, of course
-      | Just thing <- lookupNameEnv type_env name
-      = case thing of
-          ATcId { tct_closed = cl } -> isTopLevel cl  -- This is the key line
-          ATyVar {}                 -> False          -- In-scope type variables
-          AGlobal {}                -> True           --    are not closed!
-          _                         -> pprPanic "is_closed_id" (ppr name)
-      | otherwise
-      = WARN( isInternalName name, ppr name ) True
-        -- The free-var set for a top level binding mentions
-        -- imported things too, so that we can report unused imports
-        -- These won't be in the local type env.
-        -- Ditto class method etc from the current module
-
     mono_local_binds = xopt LangExt.MonoLocalBinds dflags
-                    && not closed_flag
-
-    closed_flag = foldr (is_closed_ns . bind_fvs) True binds
+                    && not (isTopLevel closedGroup)
 
     no_sig n = noCompleteSig (sig_fn n)
 
@@ -1964,6 +1943,39 @@ decideGeneralisationPlan dflags type_env bndr_names lbinds sig_fn
     restricted_match _                                                 = False
         -- No args => like a pattern binding
         -- Some args => a function binding
+
+isClosedBndrGroup :: [LHsBind Name] -> TcM TopLevelFlag
+isClosedBndrGroup bind_list = do
+    type_env <- getLclTypeEnv
+    if foldr (is_closed_ns type_env . bind_fvs) True binds
+      then return TopLevel
+      else return NotTopLevel
+  where
+    binds = map unLoc bind_list
+    binder_names = collectHsBindListBinders bind_list
+    bndr_set = mkNameSet binder_names
+
+    is_closed_ns :: TcTypeEnv -> NameSet -> Bool -> Bool
+    is_closed_ns type_env ns b = foldNameSet ((&&) . is_closed_id type_env) b ns
+        -- ns are the Names referred to from the RHS of this bind
+
+    is_closed_id :: TcTypeEnv -> Name -> Bool
+    -- See Note [Bindings with closed types] in TcRnTypes
+    is_closed_id type_env name
+      | name `elemNameSet` bndr_set
+      = True              -- Ignore binders in this groups, of course
+      | Just thing <- lookupNameEnv type_env name
+      = case thing of
+          ATcId { tct_closed = cl } -> isTopLevel cl  -- This is the key line
+          ATyVar {}                 -> False          -- In-scope type variables
+          AGlobal {}                -> True           --    are not closed!
+          _                         -> pprPanic "is_closed_id" (ppr name)
+      | otherwise
+      = WARN( isInternalName name, ppr name ) True
+        -- The free-var set for a top level binding mentions
+        -- imported things too, so that we can report unused imports
+        -- These won't be in the local type env.
+        -- Ditto class method etc from the current module
 
 -------------------
 checkStrictBinds :: TopLevelFlag -> RecFlag
