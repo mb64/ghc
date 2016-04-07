@@ -213,6 +213,10 @@ Language
    unnecessary) use of :ghc-flag:`-XImpredicativeTypes`. Users of
    :ghc-flag:`-XImpredicativeTypes` do so at their own risk!
 
+-  :ghc-flag:`-XStaticPointers` now allows the body of the ``static`` form to
+   refer to closed local bindings. For instance, this is now permitted:
+   ``f = static x where x = 'a'``.
+
 Compiler
 ~~~~~~~~
 

@@ -53,6 +53,7 @@ import Maybes
 import UniqSupply       ( UniqSupply, mkSplitUniqSupply, splitUniqSupply )
 import Outputable
 import Control.Monad
+import qualified GHC.LanguageExtensions as LangExt
 
 #ifdef GHCI
 import DynamicLoading   ( loadPlugins )
@@ -128,6 +129,7 @@ getCoreToDo dflags
     rules_on      = gopt Opt_EnableRewriteRules           dflags
     eta_expand_on = gopt Opt_DoLambdaEtaExpansion         dflags
     ww_on         = gopt Opt_WorkerWrapper                dflags
+    static_ptrs   = xopt LangExt.StaticPointers           dflags
 
     maybe_rule_check phase = runMaybe rule_check (CoreDoRuleCheck phase)
 
@@ -201,8 +203,14 @@ getCoreToDo dflags
 
     core_todo =
      if opt_level == 0 then
-       [ vectorisation
-       , CoreDoSimplify max_iter
+       [ vectorisation,
+         -- Static forms are moved to the top level with the FloatOut pass.
+         runWhen static_ptrs $ CoreDoFloatOutwards FloatOutSwitches {
+                                 floatOutLambdas   = Just 0,
+                                 floatOutConstants = True,
+                                 floatOutOverSatApps = False,
+                                 floatToTopLevelOnly = True },
+         CoreDoSimplify max_iter
              (base_mode { sm_phase = Phase 0
                         , sm_names = ["Non-opt simplification"] })
        ]
@@ -230,7 +238,8 @@ getCoreToDo dflags
            CoreDoFloatOutwards FloatOutSwitches {
                                  floatOutLambdas   = Just 0,
                                  floatOutConstants = True,
-                                 floatOutOverSatApps = False },
+                                 floatOutOverSatApps = False,
+                                 floatToTopLevelOnly = False },
                 -- Was: gentleFloatOutSwitches
                 --
                 -- I have no idea why, but not floating constants to
@@ -281,7 +290,8 @@ getCoreToDo dflags
            CoreDoFloatOutwards FloatOutSwitches {
                                  floatOutLambdas     = floatLamArgs dflags,
                                  floatOutConstants   = True,
-                                 floatOutOverSatApps = True },
+                                 floatOutOverSatApps = True,
+                                 floatToTopLevelOnly = False },
                 -- nofib/spectral/hartel/wang doubles in speed if you
                 -- do full laziness late in the day.  It only happens
                 -- after fusion and other stuff, so the early pass doesn't
