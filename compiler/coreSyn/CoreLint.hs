@@ -370,7 +370,8 @@ lintCoreBindings dflags pass local_in_scope binds
        ; mapM lint_bind binds }
   where
     flags = LF { lf_check_global_ids = check_globals
-               , lf_check_inline_loop_breakers = check_lbs }
+               , lf_check_inline_loop_breakers = check_lbs
+               , lf_check_static_ptrs = check_static_ptrs }
 
     -- See Note [Checking for global Ids]
     check_globals = case pass of
@@ -383,6 +384,13 @@ lintCoreBindings dflags pass local_in_scope binds
                       CoreDesugar    -> False
                       CoreDesugarOpt -> False
                       _              -> True
+
+    -- See Note [Checking StaticPtrs]
+    check_static_ptrs = case pass of
+                          CoreDoFloatOutwards _ -> True
+                          CoreTidy              -> True
+                          CorePrep              -> True
+                          _                     -> False
 
     binders = bindersOfBinds binds
     (_, dups) = removeDups compare binders
@@ -401,8 +409,20 @@ lintCoreBindings dflags pass local_in_scope binds
 
     -- If you edit this function, you may need to update the GHC formalism
     -- See Note [GHC Formalism]
-    lint_bind (Rec prs)         = mapM_ (lintSingleBinding TopLevel Recursive) prs
-    lint_bind (NonRec bndr rhs) = lintSingleBinding TopLevel NonRecursive (bndr,rhs)
+    lint_bind (Rec prs)         = forM_ prs $ \b@(_, rhs) ->
+      allowTopStaticPtr rhs $ lintSingleBinding TopLevel Recursive b
+    lint_bind (NonRec bndr rhs) =
+      allowTopStaticPtr rhs $ lintSingleBinding TopLevel NonRecursive (bndr,rhs)
+
+    -- Allow applications of the data constructor @StaticPtr@ at the top
+    -- but produce errors otherwise.
+    allowTopStaticPtr rhs
+      | (_, rhs') <- collectTyBinders rhs
+      , (Var b, _) <- collectArgs rhs'
+      , Just con <- isDataConId_maybe b
+      , dataConName con == staticPtrDataConName
+      = modifyLintEnv (\le -> le { le_static_ptr_found = False })
+      | otherwise = id
 
 {-
 ************************************************************************
@@ -644,9 +664,23 @@ lintCoreExpr (Let (Rec pairs) body)
     (_, dups) = removeDups compare bndrs
 
 lintCoreExpr e@(App _ _)
-    = do { fun_ty <- lintCoreExpr fun
-         ; addLoc (AnExpr e) $ foldM lintCoreArg fun_ty args }
+    = do lf <- getLintFlags
+         case fun of
+           Var b | lf_check_static_ptrs lf
+                 , Just con <- isDataConId_maybe b
+                 , dataConName con == staticPtrDataConName
+                 -> do
+              le0 <- getLintEnv
+              if le_static_ptr_found le0
+                then failWithL $
+                       text "Found StaticPtr nested in an expression: " <+>
+                       ppr e
+                else modifyLintEnv (\le -> le { le_static_ptr_found = True }) go
+           _     -> go
   where
+    go = do { fun_ty <- lintCoreExpr fun
+            ; addLoc (AnExpr e) $ foldM lintCoreArg fun_ty args }
+
     (fun, args) = collectArgs e
 
 lintCoreExpr (Lam var expr)
@@ -1556,16 +1590,20 @@ data LintEnv
                                      -- to keep track of all the variables in scope,
                                      -- both Ids and TyVars
        , le_dynflags :: DynFlags     -- DynamicFlags
+       , le_static_ptr_found :: Bool -- See Note [Checking StaticPtrs]
        }
 
 data LintFlags
   = LF { lf_check_global_ids           :: Bool -- See Note [Checking for global Ids]
        , lf_check_inline_loop_breakers :: Bool -- See Note [Checking for INLINE loop breakers]
+       , lf_check_static_ptrs          :: Bool -- See Note [Checking StaticPtrs]
     }
 
 defaultLintFlags :: LintFlags
 defaultLintFlags = LF { lf_check_global_ids = False
-                      , lf_check_inline_loop_breakers = True }
+                      , lf_check_inline_loop_breakers = True
+                      , lf_check_static_ptrs = False
+                      }
 
 newtype LintM a =
    LintM { unLintM ::
@@ -1579,6 +1617,19 @@ type WarnsAndErrs = (Bag MsgDoc, Bag MsgDoc)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Before CoreTidy, all locally-bound Ids must be LocalIds, even
 top-level ones. See Note [Exported LocalIds] and Trac #9857.
+
+Note [Checking StaticPtrs]
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every occurrence of the data constructor @StaticPtr@ should be moved to the top
+level by the FloatOut pass. The linter is checking that no occurrence is left
+nested within an expression.
+
+When @lf_check_static_ptrs@ is @True@ we test every bind to see if it has an
+application of @StaticPtr@ at the top. If so we let the linter know that it
+should tolerate one occurrence of @StaticPtr@ (through the use of
+@le_static_ptr_found@). If there is no @StaticPtr@ at the top, we just let the
+linter fail whenever it encounters an application of @StaticPtr@.
 
 Note [Type substitution]
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1635,10 +1686,20 @@ initL dflags flags m
   = case unLintM m env (emptyBag, emptyBag) of
       (_, errs) -> errs
   where
-    env = LE { le_flags = flags, le_subst = emptyTCvSubst, le_loc = [], le_dynflags = dflags }
+    env = LE { le_flags = flags
+             , le_subst = emptyTCvSubst
+             , le_loc = []
+             , le_dynflags = dflags
+             , le_static_ptr_found = True }
 
 getLintFlags :: LintM LintFlags
-getLintFlags = LintM $ \ env errs -> (Just (le_flags env), errs)
+getLintFlags = le_flags <$> getLintEnv
+
+getLintEnv :: LintM LintEnv
+getLintEnv = LintM $ \ env errs -> (Just env, errs)
+
+modifyLintEnv :: (LintEnv -> LintEnv) -> LintM a -> LintM a
+modifyLintEnv f (LintM m) = LintM $ m . f
 
 checkL :: Bool -> MsgDoc -> LintM ()
 checkL True  _   = return ()

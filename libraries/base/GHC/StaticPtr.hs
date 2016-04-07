@@ -94,9 +94,6 @@ data StaticPtrInfo = StaticPtrInfo
       spInfoUnitId  :: String
       -- | Name of the module where the static pointer is defined
     , spInfoModuleName :: String
-      -- | An internal name that is distinct for every static pointer defined in
-      -- a given module.
-    , spInfoName       :: String
       -- | Source location of the definition of the static pointer as a
       -- @(Line, Column)@ pair.
     , spInfoSrcLoc     :: (Int, Int)
