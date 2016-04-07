@@ -393,6 +393,10 @@ a) Dependency analysis prior to type checking
 b) Deciding whether we can do generalisation of the binding
     (see TcBinds.decideGeneralisationPlan)
 
+c) Deciding whether the binding can be used in static forms
+    (see TcExpr.checkClosedInStaticForm for the HsStatic case and
+     TcBinds.isClosedBndrGroup).
+
 Specifically,
 
   * bind_fvs includes all free vars that are defined in this module

@@ -210,10 +210,11 @@ data FloatOutSwitches = FloatOutSwitches {
 
   floatOutConstants :: Bool,       -- ^ True <=> float constants to top level,
                                    --            even if they do not escape a lambda
-  floatOutOverSatApps :: Bool      -- ^ True <=> float out over-saturated applications
+  floatOutOverSatApps :: Bool,     -- ^ True <=> float out over-saturated applications
                                    --            based on arity information.
                                    -- See Note [Floating over-saturated applications]
                                    -- in SetLevels
+  floatToTopLevelOnly :: Bool      -- ^ Allow floating to the top level only.
   }
 instance Outputable FloatOutSwitches where
     ppr = pprFloatOutSwitches
