@@ -418,21 +418,25 @@ isTypeClosedLetBndr id
   | isEmptyVarSet (tyCoVarsOfType (idType id)) = TopLevel
   | otherwise                                  = NotTopLevel
 
-tcExtendLetEnv :: TopLevelFlag -> TopLevelFlag -> [TcId] -> TcM a -> TcM a
+tcExtendLetEnv :: TopLevelFlag -> TopLevelFlag -> [(TcId, NameSet)] -> TcM a
+               -> TcM a
 -- Used for both top-level value bindings and and nested let/where-bindings
 -- Adds to the TcIdBinderStack too
 tcExtendLetEnv top_lvl closed_group ids thing_inside
-  = tcExtendIdBndrs [TcIdBndr id top_lvl | id <- ids] $
-    tcExtendLetEnvIds' top_lvl closed_group [(idName id, id) | id <- ids]
+  = tcExtendIdBndrs [TcIdBndr id top_lvl | (id, _) <- ids] $
+    tcExtendLetEnvIds' top_lvl closed_group
+                       [(idName id, p) | p@(id, _) <- ids]
                        thing_inside
 
-tcExtendLetEnvIds :: TopLevelFlag -> [(Name,TcId)] -> TcM a -> TcM a
+tcExtendLetEnvIds :: TopLevelFlag -> [(Name, (TcId, NameSet))] -> TcM a
+                  -> TcM a
 -- Used for both top-level value bindings and and nested let/where-bindings
 -- Does not extend the TcIdBinderStack
 tcExtendLetEnvIds top_lvl
   = tcExtendLetEnvIds' top_lvl TopLevel
 
-tcExtendLetEnvIds' :: TopLevelFlag -> TopLevelFlag -> [(Name,TcId)] -> TcM a
+tcExtendLetEnvIds' :: TopLevelFlag -> TopLevelFlag
+                   -> [(Name, (TcId, NameSet))] -> TcM a
                    -> TcM a
 -- Used for both top-level value bindings and and nested let/where-bindings
 -- Does not extend the TcIdBinderStack
@@ -441,8 +445,9 @@ tcExtendLetEnvIds' top_lvl closed_group pairs thing_inside
       [ (name, ATcId { tct_id = id
                      , tct_closed = case closed_group of
                          TopLevel -> isTypeClosedLetBndr id
-                         _        -> closed_group           })
-                     | (name,id) <- pairs ] $
+                         _        -> closed_group
+                     , tct_fvs = Just fvs                   })
+                     | (name, (id, fvs)) <- pairs ] $
     thing_inside
 
 tcExtendIdEnv :: [TcId] -> TcM a -> TcM a
@@ -462,7 +467,8 @@ tcExtendIdEnv2 names_w_ids thing_inside
                     | (_,mono_id) <- names_w_ids ] $
     do  { tc_extend_local_env NotTopLevel
                               [ (name, ATcId { tct_id = id
-                                             , tct_closed = NotTopLevel })
+                                             , tct_closed = NotTopLevel
+                                             , tct_fvs    = Nothing     })
                               | (name,id) <- names_w_ids] $
           thing_inside }
 

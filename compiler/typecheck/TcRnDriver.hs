@@ -1630,7 +1630,9 @@ runTcInteractive hsc_env thing_inside
     is_closed thing
       | AnId id <- thing
       , NotTopLevel <- isTypeClosedLetBndr id
-      = Left (idName id, ATcId { tct_id = id, tct_closed = NotTopLevel })
+      = Left (idName id, ATcId { tct_id = id
+                               , tct_closed = NotTopLevel
+                               , tct_fvs = Nothing        })
       | otherwise
       = Right thing
 

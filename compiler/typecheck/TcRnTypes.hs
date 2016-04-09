@@ -873,7 +873,9 @@ data TcTyThing
 
   | ATcId   {           -- Ids defined in this module; may not be fully zonked
         tct_id     :: TcId,
-        tct_closed :: TopLevelFlag }   -- See Note [Bindings with closed types]
+        tct_closed :: TopLevelFlag,    -- See Note [Bindings with closed types]
+        tct_fvs    :: Maybe NameSet } -- Free variables in the definition of the
+                                      -- Id. Used for error reporting.
 
   | ATyVar  Name TcTyVar        -- The type variable to which the lexically scoped type
                                 -- variable is bound. We only need the Name

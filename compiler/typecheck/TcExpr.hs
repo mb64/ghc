@@ -48,6 +48,7 @@ import ConLike
 import DataCon
 import PatSyn
 import Name
+import NameSet
 import RdrName
 import TyCon
 import Type
@@ -2492,11 +2493,51 @@ fieldNotInType p rdr
 ************************************************************************
 -}
 
+-- | A data type to describe why a variable is not closed.
+data NotClosedReason = NotLetBound
+                     | NotTypeClosed VarSet
+                     | NotClosed Name NotClosedReason
+
+-- | Checks if the given name is closed and emits an error if not.
 checkClosedInStaticForm :: Name -> TcM ()
 checkClosedInStaticForm name = do
-    thing <- tcLookup name
-    case thing of
-      ATcId { tct_closed = NotTopLevel } ->
-         addErrTc $ quotes (ppr name) <+>
-                    text "is used in a static form but it is not closed."
-      _ -> return ()
+    mreason <- checkClosed (unitNameSet name) name
+    case mreason of
+      Nothing -> return ()
+      Just reason ->
+        addErrTc $ quotes (ppr name) <+>
+                   text "is used in a static form but it is not closed" <+>
+                   text "because it"
+                   $$
+                   sep (explain reason)
+  where
+    explain NotLetBound = [text "is not let-bound."]
+    explain (NotTypeClosed vs) =
+      [ text "has a non-closed type because it contains the"
+      , text "type variables:" <+>
+        hsep (punctuate comma $ map (quotes . ppr) $ varSetElems vs)
+      ]
+    explain (NotClosed n reason) =
+      let msg = text "uses" <+> quotes (ppr n) <+> text "which"
+       in case reason of
+            NotClosed _ _ -> msg : explain reason
+            _   -> let (xs0, xs1) = splitAt 1 $ explain reason
+                    in fmap (msg <+>) xs0 ++ xs1
+
+    checkClosed :: NameSet -> Name -> TcM (Maybe NotClosedReason)
+    checkClosed visited name = do
+      thing <- tcLookup name
+      case thing of
+        ATcId { tct_closed = NotTopLevel, tct_fvs = Nothing } ->
+          return $ Just NotLetBound
+        ATcId { tct_id = tcid, tct_closed = NotTopLevel, tct_fvs = Just fvs } ->
+          flip fix (nameSetElems fvs) $ \loop xs -> case xs of
+            n : ns | not (elemNameSet n visited) -> do
+              mreason <- checkClosed (extendNameSet visited n) n
+              case mreason of
+                Nothing     -> loop ns
+                Just reason -> return $ Just $ NotClosed n reason
+            _ : ns -> loop ns
+            _ ->
+              return $ Just $ NotTypeClosed $ tyCoVarsOfType (idType tcid)
+        _ -> return Nothing

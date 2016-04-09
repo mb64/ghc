@@ -15,7 +15,7 @@ module TcBinds ( tcLocalBinds, tcTopBinds, tcRecSelBinds,
                  TcPragEnv, mkPragEnv,
                  tcUserTypeSig, instTcTySig, chooseInferredQuantifiers,
                  instTcTySigFromId, tcExtendTyVarEnvFromSig,
-                 badBootDeclErr ) where
+                 badBootDeclErr, boundIdFvs) where
 
 import {-# SOURCE #-} TcMatches ( tcGRHSsPat, tcMatchesFun )
 import {-# SOURCE #-} TcExpr  ( tcMonoExpr )
@@ -61,6 +61,7 @@ import TcValidity (checkValidType)
 import qualified GHC.LanguageExtensions as LangExt
 
 import Control.Monad
+import Data.List (find)
 
 #include "HsVersions.h"
 
@@ -354,7 +355,14 @@ tcValBinds top_lvl binds sigs thing_inside
                 -- declared with complete type signatures
                 -- Do not extend the TcIdBinderStack; instead
                 -- we extend it on a per-rhs basis in tcExtendForRhs
-        ; tcExtendLetEnvIds top_lvl [(idName id, id) | id <- poly_ids] $ do
+        ; let names = map idName poly_ids
+              id_env = zip names $ zip poly_ids $
+                         boundNameFvs [ unLoc bind
+                                      | (_, binds') <- binds
+                                      , bind <- bagToList binds'
+                                      ]
+                                      names
+        ; tcExtendLetEnvIds top_lvl id_env $ do
             { (binds', (extra_binds', thing)) <- tcBindGroups top_lvl sig_fn prag_fn binds $ do
                    { thing <- thing_inside
                      -- See Note [Pattern synonym builders don't yield dependencies]
@@ -445,8 +453,11 @@ tc_group top_lvl sig_fn prag_fn (Recursive, binds) closed thing_inside
 
     go :: [SCC (LHsBind Name)] -> TcM (LHsBinds TcId, thing)
     go (scc:sccs) = do  { (binds1, ids1) <- tc_scc scc
-                        ; (binds2, thing) <- tcExtendLetEnv top_lvl closed ids1
-                                                            (go sccs)
+                        ; let id_env = zip ids1 $
+                                      boundNameFvs (map unLoc $ bagToList binds)
+                                                   (map idName ids1)
+                        ; (binds2, thing) <-
+                            tcExtendLetEnv top_lvl closed id_env (go sccs)
                         ; return (binds1 `unionBags` binds2, thing) }
     go []         = do  { thing <- thing_inside; return (emptyBag, thing) }
 
@@ -489,7 +500,8 @@ tc_single top_lvl sig_fn prag_fn lbind closed thing_inside
                                       NonRecursive NonRecursive
                                       closed
                                       [lbind]
-       ; thing <- tcExtendLetEnv top_lvl closed ids thing_inside
+       ; let id_env = zip ids $ boundNameFvs [unLoc lbind] $ map idName ids
+       ; thing <- tcExtendLetEnv top_lvl closed id_env thing_inside
        ; return (binds1, thing) }
 
 ------------------------
@@ -1495,9 +1507,35 @@ tcMonoBinds _ sig_fn no_gen binds
 
         ; traceTc "tcMonoBinds" $ vcat [ ppr n <+> ppr id <+> ppr (idType id)
                                        | (n,id) <- rhs_id_env]
-        ; binds' <- tcExtendLetEnvIds NotTopLevel rhs_id_env $
+        ; let names = map fst rhs_id_env
+              id_env = zip names $ zip (map snd rhs_id_env)
+                                       (boundNameFvs (map unLoc binds) names)
+        ; binds' <- tcExtendLetEnvIds NotTopLevel id_env $
                     mapM (wrapLocM tcRhs) tc_binds
         ; return (listToBag binds', mono_infos) }
+
+
+-- | For each name, it yields the free variables of the binding which binds it.
+boundFvs :: (idL -> Name)      -- ^ A way to extract a name from an @idL@
+         -> PostRn idL NameSet -- ^ Value to yield when a name is not bound in
+                               --   the given bindings.
+         -> [HsBindLR idL idR]
+         -> [Name]
+         -> [PostRn idL NameSet]
+boundFvs get_n def binds = map $ \n ->
+    maybe def (bind_fvs . snd) $ find (any ((n ==) . get_n) . fst) binders
+  where
+    binders = map (\b -> (collectHsBindBinders b, b)) binds
+
+    bind_fvs (FunBind { bind_fvs = vs }) = vs
+    bind_fvs (PatBind { bind_fvs = vs }) = vs
+    bind_fvs _                           = panic "boundFvs" (text "No fvs.")
+
+boundNameFvs :: [HsBindLR Name idR] -> [Name] -> [PostRn Name NameSet]
+boundNameFvs = boundFvs  id emptyNameSet
+
+boundIdFvs :: [HsBindLR TcId idR] -> [Name] -> [PostRn TcId NameSet]
+boundIdFvs = boundFvs idName emptyNameSet
 
 ------------------------
 -- tcLhs typechecks the LHS of the bindings, to construct the environment in which
