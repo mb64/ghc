@@ -405,7 +405,7 @@ tcBindGroups top_lvl sig_fn prag_fn (group : groups) thing_inside
 ------------------------
 tc_group :: forall thing.
             TopLevelFlag -> TcSigFun -> TcPragEnv
-         -> (RecFlag, LHsBinds Name) -> TopLevelFlag -> TcM thing
+         -> (RecFlag, LHsBinds Name) -> Closed -> TcM thing
          -> TcM ([(RecFlag, LHsBinds TcId)], thing)
 
 -- Typecheck one strongly-connected component of the original program.
@@ -468,7 +468,7 @@ recursivePatSynErr binds
 
 tc_single :: forall thing.
             TopLevelFlag -> TcSigFun -> TcPragEnv
-          -> LHsBind Name -> TopLevelFlag -> TcM thing
+          -> LHsBind Name -> Closed -> TcM thing
           -> TcM (LHsBinds TcId, thing)
 tc_single _top_lvl sig_fn _prag_fn
           (L _ (PatSynBind psb@PSB{ psb_id = L _ name }))
@@ -517,7 +517,7 @@ tcPolyBinds :: TopLevelFlag -> TcSigFun -> TcPragEnv
             -> RecFlag         -- Whether the group is really recursive
             -> RecFlag         -- Whether it's recursive after breaking
                                -- dependencies based on type signatures
-            -> TopLevelFlag    -- Whether the group is closed
+            -> Closed          -- Whether the group is closed
             -> [LHsBind Name]  -- None are PatSynBind
             -> TcM (LHsBinds TcId, [TcId])
 
@@ -1904,7 +1904,7 @@ instance Outputable GeneralisationPlan where
   ppr (CheckGen _ s) = text "CheckGen" <+> ppr s
 
 decideGeneralisationPlan
-   :: DynFlags -> [LHsBind Name] -> TopLevelFlag -> TcSigFun
+   :: DynFlags -> [LHsBind Name] -> Closed -> TcSigFun
    -> GeneralisationPlan
 decideGeneralisationPlan dflags lbinds closed sig_fn
   | unlifted_pat_binds                    = NoGen
@@ -1938,7 +1938,7 @@ decideGeneralisationPlan dflags lbinds closed sig_fn
                      && any restricted binds
 
     mono_local_binds = xopt LangExt.MonoLocalBinds dflags
-                    && not (isTopLevel closed)
+                    && either (const True) (const False) closed
 
     no_sig n = noCompleteSig (sig_fn n)
 
@@ -1965,33 +1965,37 @@ decideGeneralisationPlan dflags lbinds closed sig_fn
         -- No args => like a pattern binding
         -- Some args => a function binding
 
-isClosedBndrGroup :: Bag (LHsBind Name) -> TcM TopLevelFlag
+isClosedBndrGroup :: Bag (LHsBind Name) -> TcM Closed
 isClosedBndrGroup binds = do
     type_env <- getLclTypeEnv
-    if foldrBag (is_closed_ns type_env . fvs . unLoc) True binds
-      then return TopLevel
-      else return NotTopLevel
+    return $ foldrBag (is_closed_ns type_env . fvs . unLoc) (Right ()) binds
   where
+    binders = collectHsBindsBinders binds
+
     fvs :: HsBind Name  -> NameSet
     fvs (FunBind { bind_fvs = vs }) = vs
     fvs (PatBind { bind_fvs = vs }) = vs
     fvs _                           = emptyNameSet
 
-    is_closed_ns :: TcTypeEnv -> NameSet -> Bool -> Bool
-    is_closed_ns type_env ns b = foldNameSet ((&&) . is_closed_id type_env) b ns
+    is_closed_ns :: TcTypeEnv -> NameSet -> Closed -> Closed
+    is_closed_ns type_env ns b = foldNameSet
+      (\n r -> either (Left . NotClosed binders) (const r) $
+                 is_closed_id type_env n)
+      b ns
         -- ns are the Names referred to from the RHS of this bind
 
-    is_closed_id :: TcTypeEnv -> Name -> Bool
+    is_closed_id :: TcTypeEnv -> Name -> Closed
     -- See Note [Bindings with closed types] in TcRnTypes
     is_closed_id type_env name
       | Just thing <- lookupNameEnv type_env name
       = case thing of
-          ATcId { tct_closed = cl } -> isTopLevel cl  -- This is the key line
-          ATyVar {}                 -> False          -- In-scope type variables
-          AGlobal {}                -> True           --    are not closed!
-          _                         -> pprPanic "is_closed_id" (ppr name)
+          ATcId { tct_closed = cl }       -> cl -- This is the key line.
+          -- In-scope type variables are not closed!
+          ATyVar  {} -> Left $ NotClosed [name] NotLetBound
+          AGlobal {} -> Right ()
+          _          -> pprPanic "is_closed_id" (ppr name)
       | otherwise
-      = True
+      = Right ()
         -- The free-var set for a top level binding mentions
         -- imported things too, so that we can report unused imports
         -- These won't be in the local type env.

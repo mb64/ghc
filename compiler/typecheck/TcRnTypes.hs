@@ -123,7 +123,7 @@ module TcRnTypes(
         pprEvVars, pprEvVarWithType,
 
         -- Misc other types
-        TcId, TcIdSet, HoleSort(..)
+        TcId, TcIdSet, HoleSort(..), Closed, NotClosedReason(..)
 
   ) where
 
@@ -873,7 +873,8 @@ data TcTyThing
 
   | ATcId   {           -- Ids defined in this module; may not be fully zonked
         tct_id     :: TcId,
-        tct_closed :: TopLevelFlag }   -- See Note [Bindings with closed types]
+        -- See Note [Bindings with closed types]
+        tct_closed :: Closed }
 
   | ATyVar  Name TcTyVar        -- The type variable to which the lexically scoped type
                                 -- variable is bound. We only need the Name
@@ -887,6 +888,21 @@ data TcTyThing
                      -- Note [Type checking recursive type and class declarations]
 
   | APromotionErr PromotionErr
+
+-- Expresses if a variable or binding group is closed.
+type Closed = Either NotClosedReason ()
+
+-- | A data type to describe why a variable is not closed.
+data NotClosedReason = NotLetBound
+                     | NotTypeClosed VarSet
+                     | NotClosed [Name] NotClosedReason
+
+instance Outputable NotClosedReason where
+  pprPrec _ NotLetBound = text "NotLetBound"
+  pprPrec p (NotTypeClosed vs) = (if p > 0 then parens else id) $
+                                    text "NotTypeClosed" <+> ppr vs
+  pprPrec p (NotClosed ns r) = (if p > 0 then parens else id) $
+                                  text "NotClosed" <+> ppr ns <+> pprPrec 1 r
 
 data PromotionErr
   = TyConPE          -- TyCon used in a kind before we are ready

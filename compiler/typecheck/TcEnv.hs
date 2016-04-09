@@ -409,16 +409,18 @@ getScopedTyVarBinds
   = do  { lcl_env <- getLclEnv
         ; return [(name, tv) | ATyVar name tv <- nameEnvElts (tcl_env lcl_env)] }
 
-isTypeClosedLetBndr :: Id -> TopLevelFlag
+isTypeClosedLetBndr :: Id -> Closed
 -- See Note [Bindings with closed types] in TcRnTypes
 -- Note that we decided if a let-bound variable is closed by
 -- looking at its type, which is slightly more liberal, and a whole
 -- lot easier to implement, than looking at its free variables
 isTypeClosedLetBndr id
-  | isEmptyVarSet (tyCoVarsOfType (idType id)) = TopLevel
-  | otherwise                                  = NotTopLevel
+    | isEmptyVarSet tycars = Right ()
+    | otherwise            = Left $ NotClosed [idName id] $ NotTypeClosed tycars
+  where
+    tycars = tyCoVarsOfType (idType id)
 
-tcExtendLetEnv :: TopLevelFlag -> TopLevelFlag -> [TcId] -> TcM a -> TcM a
+tcExtendLetEnv :: TopLevelFlag -> Closed -> [TcId] -> TcM a -> TcM a
 -- Used for both top-level value bindings and and nested let/where-bindings
 -- Adds to the TcIdBinderStack too
 tcExtendLetEnv top_lvl closed_group ids thing_inside
@@ -430,17 +432,16 @@ tcExtendLetEnvIds :: TopLevelFlag -> [(Name,TcId)] -> TcM a -> TcM a
 -- Used for both top-level value bindings and and nested let/where-bindings
 -- Does not extend the TcIdBinderStack
 tcExtendLetEnvIds top_lvl
-  = tcExtendLetEnvIds' top_lvl TopLevel
+  = tcExtendLetEnvIds' top_lvl (Right ())
 
-tcExtendLetEnvIds' :: TopLevelFlag -> TopLevelFlag -> [(Name,TcId)] -> TcM a
-                   -> TcM a
+tcExtendLetEnvIds' :: TopLevelFlag -> Closed -> [(Name,TcId)] -> TcM a -> TcM a
 -- Used for both top-level value bindings and and nested let/where-bindings
 -- Does not extend the TcIdBinderStack
 tcExtendLetEnvIds' top_lvl closed_group pairs thing_inside
   = tc_extend_local_env top_lvl
       [ (name, ATcId { tct_id = id
                      , tct_closed = case closed_group of
-                         TopLevel -> isTypeClosedLetBndr id
+                         Right () -> isTypeClosedLetBndr id
                          _        -> closed_group           })
                      | (name,id) <- pairs ] $
     thing_inside
@@ -462,7 +463,9 @@ tcExtendIdEnv2 names_w_ids thing_inside
                     | (_,mono_id) <- names_w_ids ] $
     do  { tc_extend_local_env NotTopLevel
                               [ (name, ATcId { tct_id = id
-                                             , tct_closed = NotTopLevel })
+                                             , tct_closed = Left $
+                                                            NotClosed [name]
+                                                            NotLetBound  })
                               | (name,id) <- names_w_ids] $
           thing_inside }
 
@@ -516,9 +519,9 @@ tcExtendLocalTypeEnv lcl_env@(TcLclEnv { tcl_env = lcl_type_env }) tc_ty_things
 
     get_tvs (_, ATcId { tct_id = id, tct_closed = closed }) tvs
       = case closed of
-          TopLevel    -> ASSERT2( isEmptyVarSet id_tvs, ppr id $$ ppr (idType id) )
+          Right () -> ASSERT2( isEmptyVarSet id_tvs, ppr id $$ ppr (idType id) )
                          tvs
-          NotTopLevel -> tvs `unionVarSet` id_tvs
+          Left _   -> tvs `unionVarSet` id_tvs
         where id_tvs = tyCoVarsOfType (idType id)
 
     get_tvs (_, ATyVar _ tv) tvs          -- See Note [Global TyVars]

@@ -2492,11 +2492,34 @@ fieldNotInType p rdr
 ************************************************************************
 -}
 
+-- | Checks if the given name is closed and emits an error if not.
 checkClosedInStaticForm :: Name -> TcM ()
 checkClosedInStaticForm name = do
     thing <- tcLookup name
     case thing of
-      ATcId { tct_closed = NotTopLevel } ->
-         addErrTc $ quotes (ppr name) <+>
-                    text "is used in a static form but it is not closed."
+      ATcId { tct_closed = Left reason } ->
+        addErrTc $ quotes (ppr name) <+>
+                   text "is used in a static form but it is not closed" <+>
+                   text "because it"
+                   $$
+                   sep (explain reason)
       _ -> return ()
+  where
+    explain NotLetBound = [text "is not let-bound."]
+    explain (NotTypeClosed vs) =
+      [ text "has a non-closed type because it contains the"
+      , text "type variables:" <+>
+        hsep (punctuate comma $ map (quotes . ppr) $ varSetElems vs)
+      ]
+    explain (NotClosed [n] reason) | name == n = explain reason
+    explain (NotClosed ns reason) =
+      let msg = case ns of
+            _ : _ : _ | elem name ns -> text "is part of a recursive group" <+>
+                                        quotes (ppr ns) <+> text "which"
+            [n] -> text "uses" <+> quotes (ppr n) <+> text "which"
+            _   -> text "uses a recursive group" <+> quotes (ppr ns) <+>
+                   text "which"
+       in case reason of
+            NotClosed _ _ -> msg : explain reason
+            _   -> let (xs0, xs1) = splitAt 1 $ explain reason
+                    in fmap (msg <+>) xs0 ++ xs1
