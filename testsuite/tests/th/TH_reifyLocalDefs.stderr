@@ -1,0 +1,5 @@
+ConT GHC.Types.Bool
+ConT GHC.Types.Int
+TupleT 0
+ConT GHC.Base.String
+ConT GHC.Types.Char
