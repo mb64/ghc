@@ -31,6 +31,7 @@ templateHaskellNames = [
     liftStringName,
     unTypeName,
     unTypeQName,
+    spliceEName, splicePName, spliceTName,
     unsafeTExpCoerceName,
 
     -- Lit
@@ -208,7 +209,7 @@ derivStrategyTyConName = thTc (fsLit "DerivStrategy")  derivStrategyTyConKey
 returnQName, bindQName, sequenceQName, newNameName, liftName,
     mkNameName, mkNameG_vName, mkNameG_dName, mkNameG_tcName,
     mkNameLName, mkNameSName, liftStringName, unTypeName, unTypeQName,
-    unsafeTExpCoerceName :: Name
+    unsafeTExpCoerceName, spliceEName, splicePName, spliceTName :: Name
 returnQName    = thFun (fsLit "returnQ")   returnQIdKey
 bindQName      = thFun (fsLit "bindQ")     bindQIdKey
 sequenceQName  = thFun (fsLit "sequenceQ") sequenceQIdKey
@@ -223,6 +224,9 @@ mkNameLName    = thFun (fsLit "mkNameL")    mkNameLIdKey
 mkNameSName    = thFun (fsLit "mkNameS")    mkNameSIdKey
 unTypeName     = thFun (fsLit "unType")     unTypeIdKey
 unTypeQName    = thFun (fsLit "unTypeQ")    unTypeQIdKey
+spliceEName   = thFun (fsLit "spliceE") spliceEIdKey
+splicePName   = thFun (fsLit "spliceP") splicePIdKey
+spliceTName   = thFun (fsLit "spliceT") spliceTIdKey
 unsafeTExpCoerceName = thFun (fsLit "unsafeTExpCoerce") unsafeTExpCoerceIdKey
 
 
@@ -723,6 +727,7 @@ newtypeDataConKey  = mkPreludeDataConUnique 115
 returnQIdKey, bindQIdKey, sequenceQIdKey, liftIdKey, newNameIdKey,
     mkNameIdKey, mkNameG_vIdKey, mkNameG_dIdKey, mkNameG_tcIdKey,
     mkNameLIdKey, mkNameSIdKey, unTypeIdKey, unTypeQIdKey,
+    spliceEIdKey, splicePIdKey, spliceTIdKey,
     unsafeTExpCoerceIdKey :: Unique
 returnQIdKey        = mkPreludeMiscIdUnique 200
 bindQIdKey          = mkPreludeMiscIdUnique 201
@@ -738,6 +743,9 @@ mkNameSIdKey         = mkPreludeMiscIdUnique 210
 unTypeIdKey          = mkPreludeMiscIdUnique 211
 unTypeQIdKey         = mkPreludeMiscIdUnique 212
 unsafeTExpCoerceIdKey = mkPreludeMiscIdUnique 213
+spliceEIdKey        = mkPreludeMiscIdUnique 214
+splicePIdKey        = mkPreludeMiscIdUnique 215
+spliceTIdKey        = mkPreludeMiscIdUnique 216
 
 
 -- data Lit = ...

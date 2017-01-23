@@ -186,6 +186,10 @@ rnExpr (NegApp e _)
 -- (not with an rnExpr crash) in a stage-1 compiler.
 rnExpr e@(HsBracket br_body) = rnBracket e br_body
 
+rnExpr (HsSpliceE (HsSpliced fins (HsSplicedExpr e))) = do
+    (e', fvs) <- rnExpr e
+    return (HsSpliceE (HsSpliced fins (HsSplicedExpr e')), fvs)
+
 rnExpr (HsSpliceE splice) = rnSpliceExpr splice
 
 ---------------------------------------------

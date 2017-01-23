@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP, DeriveDataTypeable,
-             DeriveGeneric, FlexibleInstances, DefaultSignatures,
+             DeriveGeneric, ExistentialQuantification,
+             FlexibleInstances, DefaultSignatures,
              RankNTypes, RoleAnnotations, ScopedTypeVariables,
              Trustworthy #-}
 
@@ -30,6 +31,7 @@ module Language.Haskell.TH.Syntax
     ) where
 
 import Data.Data hiding (Fixity(..))
+import qualified Data.Data as Data (Fixity(..))
 import Data.IORef
 import System.IO.Unsafe ( unsafePerformIO )
 import Control.Monad (liftM)
@@ -101,6 +103,11 @@ class Monad m => Quasi m where
   qIsExtEnabled :: Extension -> m Bool
   qExtsEnabled :: m [Extension]
 
+  -- Markers of spliced expressions
+  qSpliceE :: m Exp  -> m Exp
+  qSpliceP :: m Pat  -> m Pat
+  qSpliceT :: m Type -> m Type
+
 -----------------------------------------------------
 --      The IO instance of Quasi
 --
@@ -136,6 +143,9 @@ instance Quasi IO where
   qPutQ _               = badIO "putQ"
   qIsExtEnabled _       = badIO "isExtEnabled"
   qExtsEnabled          = badIO "extsEnabled"
+  qSpliceE              = id
+  qSpliceP              = id
+  qSpliceT              = id
 
   qRunIO m = m
 
@@ -483,6 +493,15 @@ isExtEnabled ext = Q (qIsExtEnabled ext)
 extsEnabled :: Q [Extension]
 extsEnabled = Q qExtsEnabled
 
+spliceE :: Q Exp -> Q Exp
+spliceE (Q m) = Q (qSpliceE m)
+
+spliceP :: Q Pat -> Q Pat
+spliceP (Q m) = Q (qSpliceP m)
+
+spliceT :: Q Type -> Q Type
+spliceT (Q m) = Q (qSpliceT m)
+
 instance Quasi Q where
   qNewName            = newName
   qReport             = report
@@ -504,6 +523,9 @@ instance Quasi Q where
   qPutQ               = putQ
   qIsExtEnabled       = isExtEnabled
   qExtsEnabled        = extsEnabled
+  qSpliceE            = spliceE
+  qSpliceP            = spliceP
+  qSpliceT            = spliceT
 
 
 ----------------------------------------------------
@@ -1497,6 +1519,8 @@ data Pat
   | ListP [ Pat ]                   -- ^ @{ [1,2,3] }@
   | SigP Pat Type                   -- ^ @{ p :: t }@
   | ViewP Exp Pat                   -- ^ @{ e -> p }@
+  | SplicedP ModFinalizers Pat      -- ^ A spliced patter
+                                    -- @[p| ... $(qExp) ... |]@
   deriving( Show, Eq, Ord, Data, Generic )
 
 type FieldPat = (Name,Pat)
@@ -1556,7 +1580,28 @@ data Exp
   | RecUpdE Exp [FieldExp]             -- ^ @{ (f x) { z = w } }@
   | StaticE Exp                        -- ^ @{ static e }@
   | UnboundVarE Name                   -- ^ @{ _x }@ (hole)
+  | SplicedE ModFinalizers Exp       -- ^ A spliced expression
+                                       -- @[| ... $(qExp) ... |]@
   deriving( Show, Eq, Ord, Data, Generic )
+
+-- ModFinalizers collected while running a splice
+data ModFinalizers = forall a. ModFinalizers a
+
+instance Show ModFinalizers where
+  show _ = "ModFinalizers"
+
+instance Eq ModFinalizers where
+  _ == _ = True
+
+instance Ord ModFinalizers where
+  compare _ _ = EQ
+
+-- A Data instance which ignores the argument of 'ThModFinalizers'.
+instance Data ModFinalizers where
+  gunfold _ z _ = z $ ModFinalizers []
+  toConstr  a   = mkConstr (dataTypeOf a) "ModFinalizers" [] Data.Prefix
+  dataTypeOf a  = mkDataType "Language.Haskell.TH.Syntax.ModFinalizers"
+                             [toConstr a]
 
 type FieldExp = (Name,Exp)
 
@@ -1914,6 +1959,8 @@ data Type = ForallT [TyVarBndr] Cxt Type  -- ^ @forall \<vars\>. \<ctxt\> -> \<t
           | ConstraintT                   -- ^ @Constraint@
           | LitT TyLit                    -- ^ @0,1,2, etc.@
           | WildCardT                     -- ^ @_,
+          | SplicedT ModFinalizers Type -- ^ A spliced type
+                                          -- @[t| ... $(qExp) ... |]@
       deriving( Show, Eq, Ord, Data, Generic )
 
 data TyVarBndr = PlainTV  Name            -- ^ @a@

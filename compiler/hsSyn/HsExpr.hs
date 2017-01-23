@@ -48,7 +48,7 @@ import Data.Data hiding (Fixity(..))
 import qualified Data.Data as Data (Fixity(..))
 import Data.Maybe (isNothing)
 
-import GHCi.RemoteTypes ( ForeignRef )
+import GHCi.RemoteTypes ( RemoteRef )
 import qualified Language.Haskell.TH as TH (Q)
 
 {-
@@ -1076,6 +1076,8 @@ hsExprNeedsParens (HsDo sc _ _)
        | isListCompExpr sc            = False
 hsExprNeedsParens (HsRecFld{})        = False
 hsExprNeedsParens (RecordCon{})       = False
+hsExprNeedsParens (HsSpliceE (HsSpliced _ (HsSplicedExpr e)))
+                                      = hsExprNeedsParens e
 hsExprNeedsParens (HsSpliceE{})       = False
 hsExprNeedsParens (RecordUpd{})       = False
 hsExprNeedsParens _ = True
@@ -2046,7 +2048,7 @@ isTypedSplice _                  = False   -- Quasi-quotes are untyped splices
 -- See Note [Delaying modFinalizers in untyped splices] in RnSplice. For how
 -- this is used.
 --
-newtype ThModFinalizers = ThModFinalizers [ForeignRef (TH.Q ())]
+newtype ThModFinalizers = ThModFinalizers [RemoteRef (TH.Q ())]
 
 -- A Data instance which ignores the argument of 'ThModFinalizers'.
 instance Data ThModFinalizers where

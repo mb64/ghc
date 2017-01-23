@@ -203,6 +203,14 @@ instance TH.Quasi GHCiQ where
     return ((), s { qsMap = M.insert (typeOf k) (toDyn k) (qsMap s) })
   qIsExtEnabled x = ghcCmd (IsExtEnabled x)
   qExtsEnabled = ghcCmd ExtsEnabled
+  qSpliceE = collectFinalizers TH.SplicedE
+  qSpliceP = collectFinalizers TH.SplicedP
+  qSpliceT = collectFinalizers TH.SplicedT
+
+collectFinalizers :: (TH.ModFinalizers -> a -> a) -> GHCiQ a -> GHCiQ a
+collectFinalizers f m = do
+    ghcCmd StartSplice
+    flip f <$> m <*> fmap TH.ModFinalizers (ghcCmd EndSplice)
 
 -- | The implementation of the 'StartTH' message: create
 -- a new IORef QState, and return a RemoteRef to it.

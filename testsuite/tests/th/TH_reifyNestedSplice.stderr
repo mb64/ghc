@@ -1,0 +1,6 @@
+z1 :: ConT GHC.Types.Bool
+y1 :: ConT GHC.Types.Bool
+x1 :: ConT GHC.Types.Bool
+z :: ConT GHC.Types.Bool
+y :: ConT GHC.Types.Bool
+x :: ConT GHC.Types.Bool

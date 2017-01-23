@@ -5,9 +5,11 @@ module GHCi.TH.Binary () where
 import Data.Binary
 import qualified Data.ByteString as B
 import Data.Typeable
+import GHCi.RemoteTypes
 import GHC.Serialized
 import qualified Language.Haskell.TH        as TH
 import qualified Language.Haskell.TH.Syntax as TH
+import Unsafe.Coerce (unsafeCoerce)
 
 -- Put these in a separate module because they take ages to compile
 
@@ -63,6 +65,11 @@ instance Binary TH.FamilyResultSig
 instance Binary TH.TypeFamilyHead
 instance Binary TH.PatSynDir
 instance Binary TH.PatSynArgs
+
+instance Binary TH.ModFinalizers where
+    put (TH.ModFinalizers refs) =
+      put (unsafeCoerce refs :: [RemoteRef (TH.Q ())])
+    get = TH.ModFinalizers <$> (get :: Get [RemoteRef (TH.Q ())])
 
 -- We need Binary TypeRep for serializing annotations
 

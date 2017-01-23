@@ -42,6 +42,7 @@ import Control.Monad( unless, liftM, ap )
 import Data.Maybe( catMaybes, fromMaybe, isNothing )
 import Language.Haskell.TH as TH hiding (sigP)
 import Language.Haskell.TH.Syntax as TH
+import Unsafe.Coerce (unsafeCoerce)
 
 -------------------------------------------------------------------
 --              The external interface
@@ -850,6 +851,13 @@ cvtl e = wrapL (cvt e)
                               ; return $ mkRdrRecordUpd e' flds' }
     cvt (StaticE e)      = fmap (HsStatic placeHolderNames) $ cvtl e
     cvt (UnboundVarE s)  = do { s' <- vName s; return $ HsVar (noLoc s') }
+    -- See Note [Delaying modFinalizers in untyped splices] in RnSplice.
+    cvt (SplicedE mod_finalizers e) = do
+      let fins = thModFinalizers mod_finalizers
+      HsSpliceE . HsSpliced fins . HsSplicedExpr <$> cvt e
+
+thModFinalizers :: ModFinalizers -> ThModFinalizers
+thModFinalizers (ModFinalizers a) = ThModFinalizers (unsafeCoerce a)
 
 {- Note [Dropping constructors]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1092,6 +1100,10 @@ cvtp (SigP p t)        = do { p' <- cvtPat p; t' <- cvtType t
                             ; return $ SigPatIn p' (mkLHsSigWcType t') }
 cvtp (ViewP e p)       = do { e' <- cvtl e; p' <- cvtPat p
                             ; return $ ViewPat e' p' placeHolderType }
+-- See Note [Delaying modFinalizers in untyped splices] in RnSplice.
+cvtp (SplicedP mod_finalizers p) =
+      SplicePat . HsSpliced (thModFinalizers mod_finalizers) . HsSplicedPat
+        <$> cvtp p
 
 cvtPatFld :: (TH.Name, TH.Pat) -> CvtM (LHsRecField RdrName (LPat RdrName))
 cvtPatFld (s,p)
@@ -1287,6 +1299,14 @@ cvtTypeKind ty_str ty
              | otherwise ->
                    mk_apps (HsTyVar NotPromoted
                             (noLoc (getRdrName eqPrimTyCon))) tys'
+
+           -- See Note [Delaying modFinalizers in untyped splices] in RnSplice.
+           SplicedT mod_finalizers t ->
+             fmap ( flip HsSpliceTy placeHolderKind
+                  . HsSpliced (thModFinalizers mod_finalizers)
+                  . HsSplicedTy
+                  )
+              <$> cvtType t
 
            _ -> failWith (ptext (sLit ("Malformed " ++ ty_str)) <+> text (show ty))
     }

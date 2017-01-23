@@ -197,6 +197,7 @@ pprExp _ (RecConE nm fs) = ppr nm <> braces (pprFields fs)
 pprExp _ (RecUpdE e fs) = pprExp appPrec e <> braces (pprFields fs)
 pprExp i (StaticE e) = parensIf (i >= appPrec) $
                          text "static"<+> pprExp appPrec e
+pprExp i (SplicedE _ e) = pprExp i e
 pprExp _ (UnboundVarE v) = pprName' Applied v
 
 pprFields :: [(Name,Exp)] -> Doc
@@ -296,6 +297,7 @@ pprPat _ (RecP nm fs)
 pprPat _ (ListP ps) = brackets (commaSep ps)
 pprPat i (SigP p t) = parensIf (i > noPrec) $ ppr p <+> dcolon <+> ppr t
 pprPat _ (ViewP e p) = parens $ pprExp noPrec e <+> text "->" <+> pprPat noPrec p
+pprPat i (SplicedP _ p) = pprPat i p
 
 ------------------------------
 instance Ppr Dec where

@@ -327,9 +327,11 @@ Example:
       The "s7" is the "splice point"; the (g Int 3) part
         is a typechecked expression
 
-    Desugared:    f = do { s7 <- g Int 3
+    Desugared:    f = do { s7 <- spliceE (g Int 3)
                          ; return (ConE "Data.Maybe.Just" s7) }
 
+See Note [Delaying modFinalizers in untyped splices] in RnSplice for
+an explanation of the function spliceE.
 
 Note [Template Haskell state diagram]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -624,9 +626,6 @@ runQuasi act = TH.runQ act
 runRemoteModFinalizers :: ThModFinalizers -> TcM ()
 runRemoteModFinalizers (ThModFinalizers finRefs) = do
   dflags <- getDynFlags
-  let withForeignRefs [] f = f []
-      withForeignRefs (x : xs) f = withForeignRef x $ \r ->
-        withForeignRefs xs $ \rs -> f (r : rs)
   if gopt Opt_ExternalInterpreter dflags then do
     hsc_env <- env_top <$> getEnv
     withIServ hsc_env $ \i -> do
@@ -636,12 +635,11 @@ runRemoteModFinalizers (ThModFinalizers finRefs) = do
         Nothing -> return () -- TH was not started, nothing to do
         Just fhv -> do
           liftIO $ withForeignRef fhv $ \st ->
-            withForeignRefs finRefs $ \qrefs ->
-              writeIServ i (putMessage (RunModFinalizers st qrefs))
-          () <- runRemoteTH i []
+              writeIServ i (putMessage (RunModFinalizers st finRefs))
+          () <- runRemoteTH i [] []
           readQResult i
   else do
-    qs <- liftIO (withForeignRefs finRefs $ mapM localRef)
+    qs <- liftIO (mapM localRef finRefs)
     runQuasi $ sequence_ qs
 
 runQResult
@@ -931,17 +929,43 @@ instance TH.Quasi TcM where
     dflags <- hsc_dflags <$> getTopEnv
     return $ map toEnum $ IntSet.elems $ extensionFlags dflags
 
+  qSpliceE = collectFinalizersQ TH.SplicedE
+  qSpliceP = collectFinalizersQ TH.SplicedP
+  qSpliceT = collectFinalizersQ TH.SplicedT
+
+collectFinalizersQ :: (TH.ModFinalizers -> a -> a) -> TcM a -> TcM a
+collectFinalizersQ f m = startSplice $
+    flip f <$> m <*> fmap TH.ModFinalizers endSplice
+
+startSplice :: TcM a -> TcM a
+startSplice m = do
+    mod_finalizers_ref <- newTcRef []
+    setStage (RunSplice mod_finalizers_ref) m
+
+endSplice :: TcM [RemoteRef (TH.Q ())]
+endSplice = getModFinalizerVar "endSplice" >>= readTcRef
+
 -- | Adds a mod finalizer reference to the local environment.
 addModFinalizerRef :: ForeignRef (TH.Q ()) -> TcM ()
 addModFinalizerRef finRef = do
+    gblFinalizers <- tcg_th_modfinalizers <$> getGblEnv
+    -- We keep the remote reference alive until finalizers run.
+    -- The reference is released after all uses because the finalizers are
+    -- run sequentially and in the list order.
+    updTcRef gblFinalizers (liftIO (finalizeForeignRef finRef):)
+    th_modfinalizers_var <- getModFinalizerVar "addModFinalizer"
+    updTcRef th_modfinalizers_var (unsafeForeignRefToRemoteRef finRef :)
+
+getModFinalizerVar :: String -> TcM (TcRef [RemoteRef (TH.Q ())])
+getModFinalizerVar what = do
     th_stage <- getStage
     case th_stage of
-      RunSplice th_modfinalizers_var -> updTcRef th_modfinalizers_var (finRef :)
+      RunSplice th_modfinalizers_var -> return th_modfinalizers_var
       -- This case happens only if a splice is executed and the caller does
       -- not set the 'ThStage' to 'RunSplice' to collect finalizers.
       -- See Note [Delaying modFinalizers in untyped splices] in RnSplice.
       _ ->
-        pprPanic "addModFinalizer was called when no finalizers were collected"
+        pprPanic (what ++ " was called when no finalizers were collected")
                  (ppr th_stage)
 
 -- | Releases the external interpreter state.
@@ -985,7 +1009,7 @@ runTH ty fhv = do
           withForeignRef rstate $ \state_hv ->
           withForeignRef fhv $ \q_hv ->
             writeIServ i (putMessage (RunTH state_hv q_hv ty (Just loc)))
-        runRemoteTH i []
+        runRemoteTH i [] []
         bs <- readQResult i
         return $! runGet get (LB.fromStrict bs)
 
@@ -995,16 +1019,17 @@ runTH ty fhv = do
 runRemoteTH
   :: IServ
   -> [Messages]   --  saved from nested calls to qRecover
+  -> [ThStage]
   -> TcM ()
-runRemoteTH iserv recovers = do
-  THMsg msg <- liftIO $ readIServ iserv getTHMessage
-  case msg of
+runRemoteTH iserv recovers stages = do
+   THMsg msg <- liftIO $ readIServ iserv getTHMessage
+   case msg of
     RunTHDone -> return ()
     StartRecover -> do -- Note [TH recover with -fexternal-interpreter]
       v <- getErrsVar
       msgs <- readTcRef v
       writeTcRef v emptyMessages
-      runRemoteTH iserv (msgs : recovers)
+      runRemoteTH iserv (msgs : recovers) stages
     EndRecover caught_error -> do
       v <- getErrsVar
       let (prev_msgs, rest) = case recovers of
@@ -1013,11 +1038,25 @@ runRemoteTH iserv recovers = do
       if caught_error
         then writeTcRef v prev_msgs
         else updTcRef v (unionMessages prev_msgs)
-      runRemoteTH iserv rest
+      runRemoteTH iserv rest stages
+    StartSplice -> do
+      r <- wrapTHResult $ return ()
+      liftIO $ writeIServ iserv (put r)
+      th_stage <- getStage
+      startSplice $ runRemoteTH iserv recovers (th_stage : stages)
+    EndSplice -> do
+      fins <- endSplice
+      r <- wrapTHResult $ return fins
+      liftIO $ writeIServ iserv (put r)
+      case stages of
+        -- pop a stage
+        th_stage : ss ->
+          setStage th_stage $ runRemoteTH iserv recovers ss
+        _ -> pprPanic "EndSplice received before matching StartSplice" empty
     _other -> do
       r <- handleTHMessage msg
       liftIO $ writeIServ iserv (put r)
-      runRemoteTH iserv recovers
+      runRemoteTH iserv recovers stages
 
 -- | Read a value of type QResult from the iserv
 readQResult :: Binary a => IServ -> TcM a

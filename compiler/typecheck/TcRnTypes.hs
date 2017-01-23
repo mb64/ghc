@@ -872,7 +872,7 @@ data ThStage    -- See Note [Template Haskell state diagram] in TcSplice
                       --   the result replaces the splice
                       -- Binding level = 0
 
-  | RunSplice (TcRef [ForeignRef (TH.Q ())])
+  | RunSplice (TcRef [RemoteRef (TH.Q ())])
       -- Set when running a splice, i.e. NOT when renaming or typechecking the
       -- Haskell code for the splice. See Note [RunSplice ThLevel].
       --

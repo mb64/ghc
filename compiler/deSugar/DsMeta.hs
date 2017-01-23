@@ -93,7 +93,7 @@ dsBracket brack splices
   [| \x -> $(f [| x |]) |]
 ====>
   gensym (unpackString "x"#) `bindQ` \ x1::String ->
-  lam (pvar x1) (f (var x1))
+  lam (pvar x1) (spliceE (f (var x1)))
 -}
 
 
@@ -995,7 +995,7 @@ repTy (HsKindSig t k)       = do
                                 t1 <- repLTy t
                                 k1 <- repLKind k
                                 repTSig t1 k1
-repTy (HsSpliceTy splice _)     = repSplice splice
+repTy (HsSpliceTy splice _)     = repSplice SpliceCtxType splice
 repTy (HsExplicitListTy _ _ tys) = do
                                     tys1 <- repLTys tys
                                     repTPromotedList tys1
@@ -1071,22 +1071,34 @@ repRole (L _ Nothing)                 = rep2 inferRName []
 --              Splices
 -----------------------------------------------------------------------------
 
-repSplice :: HsSplice Name -> DsM (Core a)
+-- | Indicates the context in which a splice occurs.
+data SpliceCtx = SpliceCtxExpr | SpliceCtxPat | SpliceCtxType
+
+repSplice :: SpliceCtx -> HsSplice Name -> DsM (Core a)
 -- See Note [How brackets and nested splices are handled] in TcSplice
 -- We return a CoreExpr of any old type; the context should know
-repSplice (HsTypedSplice   _ n _) = rep_splice n
-repSplice (HsUntypedSplice _ n _) = rep_splice n
-repSplice (HsQuasiQuote n _ _ _)  = rep_splice n
-repSplice e@(HsSpliced _ _)       = pprPanic "repSplice" (ppr e)
+repSplice ctx (HsTypedSplice   _ n _) = rep_splice ctx n
+repSplice ctx (HsUntypedSplice _ n _) = rep_splice ctx n
+repSplice ctx (HsQuasiQuote n _ _ _)  = rep_splice ctx n
+repSplice _ e@(HsSpliced _ _)       = pprPanic "repSplice" (ppr e)
 
-rep_splice :: Name -> DsM (Core a)
-rep_splice splice_name
+rep_splice :: SpliceCtx -> Name -> DsM (Core a)
+rep_splice ctx splice_name
  = do { mb_val <- dsLookupMetaEnv splice_name
        ; case mb_val of
            Just (DsSplice e) -> do { e' <- dsExpr e
-                                   ; return (MkC e') }
+                                   ; e'' <- wrapSplice e'
+                                   ; return (MkC e'') }
            _ -> pprPanic "HsSplice" (ppr splice_name) }
                         -- Should not happen; statically checked
+ where
+   -- See Note [Delaying modFinalizers in untyped splices] in RnSplice.
+   wrapSplice e = do
+     splicedId <- dsLookupGlobalId $ case ctx of
+       SpliceCtxExpr -> spliceEName
+       SpliceCtxPat  -> splicePName
+       SpliceCtxType -> spliceTName
+     return $ mkCoreApps (Var splicedId) [e]
 
 -----------------------------------------------------------------------------
 --              Expressions
@@ -1220,7 +1232,7 @@ repE (ArithSeq _ _ aseq) =
                              ds3 <- repLE e3
                              repFromThenTo ds1 ds2 ds3
 
-repE (HsSpliceE splice)    = repSplice splice
+repE (HsSpliceE splice)    = repSplice SpliceCtxExpr splice
 repE (HsStatic _ e)        = repLE e >>= rep2 staticEName . (:[]) . unC
 repE (HsUnboundVar uv)     = do
                                occ   <- occNameLit (unboundVarOcc uv)
@@ -1620,7 +1632,7 @@ repP p@(NPat _ (Just _) _ _) = notHandled "Negative overloaded patterns" (ppr p)
 repP (SigPatIn p t) = do { p' <- repLP p
                          ; t' <- repLTy (hsSigWcType t)
                          ; repPsig p' t' }
-repP (SplicePat splice) = repSplice splice
+repP (SplicePat splice) = repSplice SpliceCtxPat splice
 
 repP other = notHandled "Exotic pattern" (ppr other)
 

@@ -631,6 +631,10 @@ rnHsTyKi env t@(HsEqTy ty1 ty2)
        ; (ty2', fvs2) <- rnLHsTyKi env ty2
        ; return (HsEqTy ty1' ty2', fvs1 `plusFV` fvs2) }
 
+rnHsTyKi env (HsSpliceTy (HsSpliced fins (HsSplicedTy t)) k) = do
+    (t', fvs) <- rnHsTyKi env t
+    return (HsSpliceTy (HsSpliced fins (HsSplicedTy t')) k, fvs)
+
 rnHsTyKi _ (HsSpliceTy sp k)
   = rnSpliceType sp k
 
@@ -1610,7 +1614,7 @@ extract_lkind :: LHsType RdrName -> FreeKiTyVars -> RnM FreeKiTyVars
 extract_lkind = extract_lty KindLevel
 
 extract_lty :: TypeOrKind -> LHsType RdrName -> FreeKiTyVars -> RnM FreeKiTyVars
-extract_lty t_or_k (L _ ty) acc
+extract_lty t_or_k (L loc ty) acc
   = case ty of
       HsTyVar _  ltv            -> extract_tv t_or_k ltv acc
       HsBangTy _ ty             -> extract_lty t_or_k ty acc
@@ -1634,7 +1638,10 @@ extract_lty t_or_k (L _ ty) acc
                                    extract_lty t_or_k ty2 acc
       HsParTy ty                -> extract_lty t_or_k ty acc
       HsCoreTy {}               -> return acc  -- The type is closed
-      HsSpliceTy {}             -> return acc  -- Type splices mention no tvs
+      HsSpliceTy (HsSpliced _ (HsSplicedTy ty)) _
+                                -> extract_lty t_or_k (L loc ty) acc
+      -- Other type splices mention no tvs
+      HsSpliceTy {}             -> return acc
       HsDocTy ty _              -> extract_lty t_or_k ty acc
       HsExplicitListTy _ _ tys  -> extract_ltys t_or_k tys acc
       HsExplicitTupleTy _ tys   -> extract_ltys t_or_k tys acc

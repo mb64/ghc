@@ -52,7 +52,7 @@ import {-# SOURCE #-} TcSplice
     , tcTopSpliceExpr
     )
 
-import GHCi.RemoteTypes ( ForeignRef )
+import GHCi.RemoteTypes ( RemoteRef )
 import qualified Language.Haskell.TH as TH (Q)
 
 import qualified GHC.LanguageExtensions as LangExt
@@ -283,7 +283,7 @@ runRnSplice :: UntypedSpliceFlavour
             -> (res -> SDoc)    -- How to pretty-print res
                                 -- Usually just ppr, but not for [Decl]
             -> HsSplice Name    -- Always untyped
-            -> TcRn (res, [ForeignRef (TH.Q ())])
+            -> TcRn (res, [RemoteRef (TH.Q ())])
 runRnSplice flavour run_meta ppr_res splice
   = do { splice' <- getHooked runRnSpliceHook return >>= ($ splice)
 
@@ -480,7 +480,7 @@ populated. To address this, we allow 'reify' execution to be deferred with
 'addModFinalizer'.
 
 > let x = e in $(do addModFinalizer (reify (mkName "x") >>= runIO . print)
-                    [| return () |]
+                    [| x |]
                 )
 
 The finalizer is run with the local type environment when type checking is
@@ -494,13 +494,42 @@ collected during evaluation of the splice [3]. In our example,
 > HsLet
 >   (x = e)
 >   (HsSpliceE $ HsSpliced [reify (mkName "x") >>= runIO . print]
->                          (HsSplicedExpr $ return ())
+>                          (HsSplicedExpr $ HsVar x)
 >   )
 
 When the typechecker finds the annotation, it inserts the finalizers in the
 global environment and exposes the current local environment to them [4, 5, 6].
 
 > addModFinalizersWithLclEnv [reify (mkName "x") >>= runIO . print]
+
+Nested splices are handled in a similar way, but there are some differences.
+
+> [| let x = e in $(do addModFinalizer (reify (mkName "x") >>= runIO . print)
+>                      [| x |]
+>                  )
+>  |]
+
+Desugars in [7] to
+
+>  letE [x = e] $ spliceE $ do
+>     addModFinalizer (reify (mkName "x") >>= runIO . print)
+>     var x
+
+The function @spliceE@ collects all the finalizers created with addModFinalizer.
+When this code is executed it produces the TH AST
+
+> LamE [x = e] $
+>   SplicedE [addModFinalizer (reify (mkName "x") >>= runIO . print)]
+>            x
+
+This expression is converted in [8] to HsSyn translating SplicedE to HsSpliced,
+yielding the same HsSyn expression as before.
+
+> HsLet
+>   (x = e)
+>   (HsSpliceE $ HsSpliced [reify (mkName "x") >>= runIO . print]
+>                          (HsSplicedExpr $ HsVar x)
+>   )
 
 References:
 
@@ -510,6 +539,8 @@ References:
 [4] 'TcExpr.tcExpr' ('HsSpliceE' ('HsSpliced' ...))
 [5] 'TcHsType.tc_hs_type' ('HsSpliceTy' ('HsSpliced' ...))
 [6] 'TcPat.tc_pat' ('SplicePat' ('HsSpliced' ...))
+[7] 'DsMeta.rep_splice'
+[8] 'Convert.cvtl', 'Convert.cvtp' and 'Convert.cvtTypeKind'
 
 -}
 
@@ -637,7 +668,7 @@ rnTopSpliceDecls splice
      -- there is no point in delaying them.
      --
      -- See Note [Delaying modFinalizers in untyped splices].
-     add_mod_finalizers_now :: [ForeignRef (TH.Q ())] -> TcRn ()
+     add_mod_finalizers_now :: [RemoteRef (TH.Q ())] -> TcRn ()
      add_mod_finalizers_now []             = return ()
      add_mod_finalizers_now mod_finalizers = do
        th_modfinalizers_var <- fmap tcg_th_modfinalizers getGblEnv

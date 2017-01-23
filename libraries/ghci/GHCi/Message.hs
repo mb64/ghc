@@ -239,6 +239,9 @@ data THMessage a where
   StartRecover :: THMessage ()
   EndRecover :: Bool -> THMessage ()
 
+  StartSplice :: THMessage (THResult ())
+  EndSplice   :: THMessage (THResult [RemoteRef (TH.Q ())])
+
   -- | Indicates that this RunTH is finished, and the next message
   -- will be the result of RunTH (a QResult).
   RunTHDone :: THMessage ()
@@ -268,7 +271,9 @@ getTHMessage = do
     14 -> THMsg <$> return StartRecover
     15 -> THMsg <$> EndRecover <$> get
     16 -> return (THMsg RunTHDone)
-    _  -> THMsg <$> AddModFinalizer <$> get
+    17 -> THMsg <$> AddModFinalizer <$> get
+    18 -> return $ THMsg StartSplice
+    _  -> return $ THMsg EndSplice
 
 putTHMessage :: THMessage a -> Put
 putTHMessage m = case m of
@@ -290,6 +295,8 @@ putTHMessage m = case m of
   EndRecover a                -> putWord8 15 >> put a
   RunTHDone                   -> putWord8 16
   AddModFinalizer a           -> putWord8 17 >> put a
+  StartSplice                 -> putWord8 18
+  EndSplice                   -> putWord8 19
 
 
 data EvalOpts = EvalOpts
