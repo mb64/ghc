@@ -67,6 +67,7 @@ module HsUtils(
   -- Template Haskell
   mkHsSpliceTy, mkHsSpliceE, mkHsSpliceTE, mkUntypedSplice,
   mkHsQuasiQuote, unqualQuasiQuote,
+  wrapHsQuasiQuote,
 
   -- Flags
   noRebindableInfo,
@@ -336,6 +337,25 @@ mkHsSpliceTy hasParen e
 
 mkHsQuasiQuote :: RdrName -> SrcSpan -> FastString -> HsSplice RdrName
 mkHsQuasiQuote quoter span quote = HsQuasiQuote unqualSplice quoter span quote
+
+wrapHsQuasiQuote :: SrcSpan -> HsExpr RdrName -> HsExpr RdrName
+wrapHsQuasiQuote span qqExp =
+    HsLet (L span (HsValBinds (ValBindsIn (unitBag (L span bind)) [])))
+          (L span (HsVar (L span ghc_qq)))
+  where
+    bind :: HsBindLR RdrName RdrName
+    bind = PatBind
+      { pat_lhs    = L span (VarPat (L span ghc_qq))
+      , pat_rhs    = GRHSs
+          { grhssGRHSs = [L span (GRHS [] (L span qqExp))]
+          , grhssLocalBinds = L span EmptyLocalBinds
+          }
+
+      , pat_rhs_ty = PlaceHolder
+      , bind_fvs   = PlaceHolder
+      , pat_ticks  = ([], [])
+      }
+    ghc_qq = mkRdrUnqual (mkVarOccFS (fsLit "__ghc_qq"))
 
 unqualQuasiQuote :: RdrName
 unqualQuasiQuote = mkRdrUnqual (mkVarOccFS (fsLit "quasiquote"))

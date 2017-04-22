@@ -2532,7 +2532,7 @@ aexp2   :: { LHsExpr RdrName }
                                           [mo $1,mu AnnCloseQ $3] }
         | '[d|' cvtopbody '|]' {% ams (sLL $1 $> $ HsBracket (DecBrL (snd $2)))
                                       (mo $1:mu AnnCloseQ $3:fst $2) }
-        | quasiquote          { sL1 $1 (HsSpliceE (unLoc $1)) }
+        | quasiquote          { sL1 $1 (wrapHsQuasiQuote (getLoc $1) (HsSpliceE (unLoc $1))) }
 
         -- arrow notation extension
         | '(|' aexp2 cmdargs '|)'  {% ams (sLL $1 $> $ HsArrForm $2
