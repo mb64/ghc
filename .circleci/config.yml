@@ -22,13 +22,13 @@ jobs:
     - run:
         name: build
         command: |
-          # do  not build docs
-          echo 'HADDOCK_DOCS       = NO' >> mk/validate.mk
-          echo 'BUILD_SPHINX_HTML  = NO' >> mk/validate.mk
-          echo 'BUILD_SPHINX_PDF   = NO' >> mk/validate.mk
-          # do not build dynamic libraries
-          echo 'DYNAMIC_GHC_PROGRAMS = NO' >> mk/validate.mk
-          echo 'GhcLibWays = v' >> mk/validate.mk
-          nproc
+          # # do  not build docs
+          # echo 'HADDOCK_DOCS       = NO' >> mk/validate.mk
+          # echo 'BUILD_SPHINX_HTML  = NO' >> mk/validate.mk
+          # echo 'BUILD_SPHINX_PDF   = NO' >> mk/validate.mk
+          # # do not build dynamic libraries
+          # echo 'DYNAMIC_GHC_PROGRAMS = NO' >> mk/validate.mk
+          # echo 'GhcLibWays = v' >> mk/validate.mk
+          # nproc
           THREADS=2 SKIP_PERF_TESTS=YES VERBOSE=2 ./validate --fast --quiet
           
