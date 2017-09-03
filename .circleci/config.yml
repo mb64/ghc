@@ -8,7 +8,7 @@ jobs:
     - run:
         name: git
         command: |
-          apt-get install -y git
+          apt-get install -y git openssh
     - checkout
     - run:
         name: build
